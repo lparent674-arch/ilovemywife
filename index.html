@@ -48,24 +48,17 @@
   <div id="container">
     <video id="camera" autoplay playsinline></video>
     <canvas id="canvas"></canvas>
-    <div id="message">Point the camera at the heart…</div>
+    <div id="message">Initializing camera…</div>
   </div>
 
   <video id="overlayVideo" src="ilovemywife.mp4" playsinline muted style="display:none;"></video>
 
-  <!-- Hidden downscaled buffer for fast QR scanning -->
-  <canvas id="qrBuffer" width="320" height="240" style="display:none;"></canvas>
-
   <script>
-    const expectedQRText = "https://lparent674-arch.github.io/ilovemywife/";
+    const expectedQRText = "https://lparent674-arch.github.io/ilovemywife";
 
     const video = document.getElementById('camera');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-
-    const qrBuffer = document.getElementById('qrBuffer');
-    const qrCtx = qrBuffer.getContext('2d');
-
     const overlayVideo = document.getElementById('overlayVideo');
     const message = document.getElementById('message');
 
@@ -81,14 +74,20 @@
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
+          video: {
+            facingMode: 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          },
           audio: false
         });
+
         video.srcObject = stream;
         video.onloadedmetadata = () => {
           video.play();
           streaming = true;
           resizeCanvas();
+          message.textContent = "Point the camera at the heart…";
           requestAnimationFrame(tick);
         };
       } catch (e) {
@@ -96,13 +95,6 @@
         message.textContent = "Unable to access camera.";
       }
     }
-
-    // --- Lightweight smoothing ---
-    let qrVisible = false;
-    let lastQRTime = 0;
-    const LINGER_TIME = 900;
-    const VIDEO_SCALE = 2.0;
-    let fade = 0;
 
     function drawOverlayOnQR(qr) {
       const pts = qr.location;
@@ -125,22 +117,15 @@
       const minY = Math.min(...ys);
       const maxY = Math.max(...ys);
 
-      const w = (maxX - minX) * VIDEO_SCALE;
-      const h = (maxY - minY) * VIDEO_SCALE;
-
-      const centerX = (minX + maxX) / 2;
-      const centerY = (minY + maxY) / 2;
-
-      const drawX = centerX - w / 2;
-      const drawY = centerY - h / 2;
+      const w = maxX - minX;
+      const h = maxY - minY;
 
       if (overlayVideo.readyState >= 2) {
         ctx.save();
-        ctx.globalAlpha = fade;
         ctx.beginPath();
-        ctx.rect(drawX, drawY, w, h);
+        ctx.rect(minX, minY, w, h);
         ctx.clip();
-        ctx.drawImage(overlayVideo, drawX, drawY, w, h);
+        ctx.drawImage(overlayVideo, minX, minY, w, h);
         ctx.restore();
       }
     }
@@ -179,40 +164,21 @@
 
       ctx.drawImage(video, offsetX, offsetY, drawW, drawH);
 
-      // Downscale camera feed into 320x240 buffer
-      qrCtx.drawImage(video, 0, 0, 320, 240);
-      const imageData = qrCtx.getImageData(0, 0, 320, 240);
-
-      const qr = jsQR(imageData.data, 320, 240, { inversionAttempts: "attemptBoth" });
-
-      const now = performance.now();
+      const imageData = ctx.getImageData(0, 0, cw, ch);
+      const qr = jsQR(imageData.data, cw, ch, { inversionAttempts: "attemptBoth" });
 
       if (qr && qr.data && qr.data.trim() === expectedQRText) {
-        qrVisible = true;
-        lastQRTime = now;
-      } else {
-        if (now - lastQRTime > LINGER_TIME) {
-          qrVisible = false;
-        }
-      }
-
-      if (qrVisible) {
-        fade = Math.min(1, fade + 0.08);
+        message.textContent = "QR detected!";
         if (overlayVideo.paused) {
           overlayVideo.currentTime = 0;
           overlayVideo.play().catch(() => {});
         }
-        message.textContent = "Keep the heart in view…";
+        drawOverlayOnQR(qr);
       } else {
-        fade = Math.max(0, fade - 0.08);
-        if (fade === 0 && !overlayVideo.paused) {
+        message.textContent = "QR NOT detected.";
+        if (!overlayVideo.paused) {
           overlayVideo.pause();
         }
-        message.textContent = "Point the camera at the heart…";
-      }
-
-      if (qrVisible && qr) {
-        drawOverlayOnQR(qr);
       }
 
       requestAnimationFrame(tick);
